@@ -33,16 +33,21 @@ logger = logging.getLogger(__name__)
 TOKEN = "7264448035:AAGFd6K4lCTOpwVXsNe7yeAWeWDxJbulgus"
 
 # ========= CONFIG =========
-# Thêm 5m, giữ 15m, 1h, 4h, 1d
-TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
+# Khung thời gian dùng cho TẤT CẢ các đồng
+TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h", "12h", "1d", "1w"]
 
-# Bổ sung BTCDOM -> BTCDOMUSDT (Binance Futures index)
+# Map các coin yêu thích -> symbol Binance (spot hoặc futures)
 FAV_SYMBOLS = {
     "BTC": "BTCUSDT",
     "ETH": "ETHUSDT",
     "SOL": "SOLUSDT",
     "TRUMP": "TRUMPUSDT",
-    "BTCDOM": "BTCDOMUSDT",
+    "BTCDOM": "BTCDOMUSDT",  # futures index
+    "STRK": "STRKUSDT",
+    "XRP": "XRPUSDT",
+    "TAO": "TAOUSDT",
+    "ICP": "ICPUSDT",
+    "VIRTUAL": "VIRTUALUSDT",
 }
 
 ALERTS_FILE = "alerts.json"
@@ -299,7 +304,7 @@ def get_help_text():
         "📌 *Các lệnh chính:*\n"
         "/start – mở menu chính\n"
         "/help – xem lệnh nhanh\n"
-        "/report BTC – report đa khung (5m, 15m, 1h, 4h, 1d)\n\n"
+        "/report BTC – report đa khung (5m, 15m, 30m, 1h, 4h, 12h, 1d, 1w)\n\n"
         "Lệnh long/short (có AI):\n"
         "  /longbtc [entry] [tf]\n"
         "  /shortbtc [entry] [tf]\n"
@@ -313,7 +318,11 @@ def get_help_text():
         "  /longbtc           → kế hoạch long BTC 1h\n"
         "  /longbtc 62000     → đánh giá lệnh long BTC entry 62000 (1h)\n"
         "  /shorteth 3500 4h  → đánh giá lệnh short ETH entry 3500 (4h)\n\n"
-        "Có thể dùng /report với: BTC, ETH, SOL, TRUMP, BTCDOM\n\n"
+        "Các lệnh /report:\n"
+        "  /report BTC      → chỉ BTC\n"
+        "  /report BTCDOM   → chỉ BTCDOM\n"
+        "  /report ETH      → ETH + BTC + BTCDOM gộp 1 block\n"
+        "  /report SOL, TRUMP, STRK, XRP, TAO, ICP, VIRTUAL cũng tương tự.\n\n"
         "Alert giá:\n"
         "  /alert BTC 1h below 60000\n"
         "  /alert BTC 1h above 65000\n"
@@ -378,25 +387,98 @@ def build_short_menu_kb():
 
 
 def build_report_menu_kb():
-    # Thêm BTCDOM vào menu REPORT
+    """
+    Nút BTC + BTCDOM: report riêng.
+    Các nút còn lại: report coin đó + BTC + BTCDOM (gộp 1 block).
+    """
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton("BTC", callback_data="REPORT|BTC"),
-                InlineKeyboardButton("ETH", callback_data="REPORT|ETH"),
-            ],
-            [
-                InlineKeyboardButton("SOL", callback_data="REPORT|SOL"),
-                InlineKeyboardButton("TRUMP", callback_data="REPORT|TRUMP"),
-            ],
-            [
                 InlineKeyboardButton("BTCDOM", callback_data="REPORT|BTCDOM"),
+            ],
+            [
+                InlineKeyboardButton("ETH", callback_data="REPORT|ETH"),
+                InlineKeyboardButton("SOL", callback_data="REPORT|SOL"),
+            ],
+            [
+                InlineKeyboardButton("TRUMP", callback_data="REPORT|TRUMP"),
+                InlineKeyboardButton("STRK", callback_data="REPORT|STRK"),
+            ],
+            [
+                InlineKeyboardButton("XRP", callback_data="REPORT|XRP"),
+                InlineKeyboardButton("TAO", callback_data="REPORT|TAO"),
+            ],
+            [
+                InlineKeyboardButton("ICP", callback_data="REPORT|ICP"),
+                InlineKeyboardButton("VIRTUAL", callback_data="REPORT|VIRTUAL"),
             ],
             [
                 InlineKeyboardButton("⬅ Quay lại", callback_data="MENU_MAIN"),
             ],
         ]
     )
+
+
+# ========= REPORT BUILDERS =========
+def build_single_report(sym_key: str) -> str:
+    """
+    Report 1 đồng duy nhất (bit BTC hoặc BTCDOM).
+    """
+    key = sym_key.upper()
+    symbol = normalize_symbol(key)
+    lines = [f"📊 Report *{key}* ({symbol}):"]
+
+    for tf in TIMEFRAMES:
+        try:
+            ind = get_indicators(symbol, tf)
+            lines.append(
+                f"\n⏱ *{tf}*\n"
+                f"• O/H/L/C: `{fmt_num(ind['open'])}` / `{fmt_num(ind['high'])}` / `{fmt_num(ind['low'])}` / `{fmt_num(ind['price'])}`\n"
+                f"• Thay đổi vs close trước: `{fmt_num(ind['change_pct'], 2)}%`\n"
+                f"• Biên độ (H-L)/C: `{fmt_num(ind['range_pct'], 2)}%`, Body%: `{fmt_num(ind['body_pct'], 2)}%`\n"
+                f"• Volume: `{fmt_num(ind['vol'], 2)}`, Vol MA20: `{fmt_num(ind['vol_ma20'], 2)}`\n"
+                f"• MA20 / MA50: `{fmt_num(ind['ma20'])}` / `{fmt_num(ind['ma50'])}`\n"
+                f"• EMA20 / EMA50: `{fmt_num(ind['ema20'])}` / `{fmt_num(ind['ema50'])}`\n"
+                f"• RSI14: `{fmt_num(ind['rsi14'], 2)}`, ATR14: `{fmt_num(ind['atr14'], 2)}`\n"
+                f"• Vị trí trong range 14 nến: `{fmt_num(ind['range_pos_14'], 2)}%` (0% = đáy, 100% = đỉnh)"
+            )
+        except Exception as e:
+            lines.append(f"\n⏱ {tf}: lỗi {e}")
+
+    return "\n".join(lines)
+
+
+def build_combo_report(main_key: str) -> str:
+    """
+    Report combo: main + BTC + BTCDOM gộp 1 block,
+    group theo timeframe cho dễ so sánh.
+    """
+    main_key = main_key.upper()
+    coins = [main_key, "BTC", "BTCDOM"]
+    symbols = {k: normalize_symbol(k) for k in coins}
+
+    lines = [f"📊 Report *{main_key} + BTC + BTCDOM* (gộp 1 block)", ""]
+
+    for tf in TIMEFRAMES:
+        lines.append(f"⏱ *{tf}*")
+        for ck in coins:
+            sym = symbols[ck]
+            try:
+                ind = get_indicators(sym, tf)
+                lines.append(
+                    f"• {ck} ({sym}):\n"
+                    f"   • O/H/L/C: `{fmt_num(ind['open'])}` / `{fmt_num(ind['high'])}` / `{fmt_num(ind['low'])}` / `{fmt_num(ind['price'])}`\n"
+                    f"   • Δ vs close trước: `{fmt_num(ind['change_pct'], 2)}%`, Biên độ: `{fmt_num(ind['range_pct'], 2)}%`, Body%: `{fmt_num(ind['body_pct'], 2)}%`\n"
+                    f"   • Vol: `{fmt_num(ind['vol'], 2)}`, Vol MA20: `{fmt_num(ind['vol_ma20'], 2)}`\n"
+                    f"   • MA20/MA50: `{fmt_num(ind['ma20'])}` / `{fmt_num(ind['ma50'])}`; EMA20/EMA50: `{fmt_num(ind['ema20'])}` / `{fmt_num(ind['ema50'])}`\n"
+                    f"   • RSI14: `{fmt_num(ind['rsi14'], 2)}`, ATR14: `{fmt_num(ind['atr14'], 2)}`; Vị trí range 14 nến: `{fmt_num(ind['range_pos_14'], 2)}%`"
+                )
+            except Exception as e:
+                lines.append(f"• {ck}: lỗi {e}")
+        lines.append("")  # dòng trống ngăn giữa timeframe
+
+    return "\n".join(lines)
 
 
 # ========= BASIC COMMANDS =========
@@ -416,26 +498,20 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    symbol_raw = context.args[0] if context.args else "BTC"
-    symbol = normalize_symbol(symbol_raw)
-    lines = [f"📊 Report *{symbol}*:"]
-    for tf in TIMEFRAMES:
-        try:
-            ind = get_indicators(symbol, tf)
-            lines.append(
-                f"\n⏱ *{tf}*\n"
-                f"• O/H/L/C: `{fmt_num(ind['open'])}` / `{fmt_num(ind['high'])}` / `{fmt_num(ind['low'])}` / `{fmt_num(ind['price'])}`\n"
-                f"• Thay đổi vs close trước: `{fmt_num(ind['change_pct'], 2)}%`\n"
-                f"• Biên độ (H-L)/C: `{fmt_num(ind['range_pct'], 2)}%`, Body%: `{fmt_num(ind['body_pct'], 2)}%`\n"
-                f"• Volume: `{fmt_num(ind['vol'], 2)}`, Vol MA20: `{fmt_num(ind['vol_ma20'], 2)}`\n"
-                f"• MA20 / MA50: `{fmt_num(ind['ma20'])}` / `{fmt_num(ind['ma50'])}`\n"
-                f"• EMA20 / EMA50: `{fmt_num(ind['ema20'])}` / `{fmt_num(ind['ema50'])}`\n"
-                f"• RSI14: `{fmt_num(ind['rsi14'], 2)}`, ATR14: `{fmt_num(ind['atr14'], 2)}`\n"
-                f"• Vị trí trong range 14 nến: `{fmt_num(ind['range_pos_14'], 2)}%` (0% = đáy, 100% = đỉnh)"
-            )
-        except Exception as e:
-            lines.append(f"\n⏱ {tf}: lỗi {e}")
-    await update.message.reply_text("\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
+    """
+    /report BTC      → chỉ BTC
+    /report BTCDOM   → chỉ BTCDOM
+    /report ETH      → ETH + BTC + BTCDOM (gộp 1 block)
+    /report SOL,...  → tương tự ETH.
+    """
+    sym_key = context.args[0].upper() if context.args else "BTC"
+
+    if sym_key in ("BTC", "BTCDOM"):
+        text = build_single_report(sym_key)
+    else:
+        text = build_combo_report(sym_key)
+
+    await update.message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN)
 
 
 # ========= PLAN BUILDERS =========
@@ -762,33 +838,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("REPORT|"):
         try:
-            _, sym = data.split("|")
+            _, sym_key = data.split("|")
         except ValueError:
             await context.bot.send_message(chat_id, "Callback REPORT lỗi format.")
             return
 
-        symbol = normalize_symbol(sym)
-        lines = [f"📊 Report *{symbol}*:"]
-        for tf in TIMEFRAMES:
-            try:
-                ind = get_indicators(symbol, tf)
-                lines.append(
-                    f"\n⏱ *{tf}*\n"
-                    f"• O/H/L/C: `{fmt_num(ind['open'])}` / `{fmt_num(ind['high'])}` / `{fmt_num(ind['low'])}` / `{fmt_num(ind['price'])}`\n"
-                    f"• Thay đổi vs close trước: `{fmt_num(ind['change_pct'], 2)}%`\n"
-                    f"• Biên độ (H-L)/C: `{fmt_num(ind['range_pct'], 2)}%`, Body%: `{fmt_num(ind['body_pct'], 2)}%`\n"
-                    f"• Volume: `{fmt_num(ind['vol'], 2)}`, Vol MA20: `{fmt_num(ind['vol_ma20'], 2)}`\n"
-                    f"• MA20 / MA50: `{fmt_num(ind['ma20'])}` / `{fmt_num(ind['ma50'])}`\n"
-                    f"• EMA20 / EMA50: `{fmt_num(ind['ema20'])}` / `{fmt_num(ind['ema50'])}`\n"
-                    f"• RSI14: `{fmt_num(ind['rsi14'], 2)}`, ATR14: `{fmt_num(ind['atr14'], 2)}`\n"
-                    f"• Vị trí trong range 14 nến: `{fmt_num(ind['range_pos_14'], 2)}%` (0% = đáy, 100% = đỉnh)"
-                )
-            except Exception as e:
-                lines.append(f"\n⏱ {tf}: lỗi {e}")
+        sym_key = sym_key.upper()
+        if sym_key in ("BTC", "BTCDOM"):
+            text = build_single_report(sym_key)
+        else:
+            text = build_combo_report(sym_key)
 
         await context.bot.send_message(
             chat_id,
-            "\n".join(lines),
+            text,
             parse_mode=constants.ParseMode.MARKDOWN,
         )
 
