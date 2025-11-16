@@ -34,7 +34,7 @@ TOKEN = "8340989991:AAFbc5IiM5onGkvJDdzTrVzBgvseMrD-8xA"
 
 # ========= CONFIG =========
 # Thêm khung 5m, 15m, 30m, 1h, 4h, 12h, 1d, 1w cho TẤT CẢ các đồng
-TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h", "12h", "1d", "1w"]
+TIMEFRAMES = ["5m", "15m", "1h", "4h", "12h", "1d"]
 
 # Map các coin yêu thích -> symbol Binance (spot hoặc futures)
 FAV_SYMBOLS = {
