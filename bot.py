@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # ========= TELEGRAM TOKEN =========
 # 👉 THAY TOKEN CỦA MÀY VÀO ĐÂY (lấy từ BotFather)
-TOKEN = "7264448035:AAGFd6K4lCTOpwVXsNe7yeAWeWDxJbulgus"
+TOKEN = "8340989991:AAFbc5IiM5onGkvJDdzTrVzBgvseMrD-8xA"
 
 # ========= CONFIG =========
 # Khung thời gian dùng cho TẤT CẢ các đồng
