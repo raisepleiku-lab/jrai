@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 TOKEN = "8340989991:AAFbc5IiM5onGkvJDdzTrVzBgvseMrD-8xA"
 
 # ========= CONFIG =========
-# Khung thời gian dùng cho TẤT CẢ các đồng
+# Thêm khung 5m, 15m, 30m, 1h, 4h, 12h, 1d, 1w cho TẤT CẢ các đồng
 TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h", "12h", "1d", "1w"]
 
 # Map các coin yêu thích -> symbol Binance (spot hoặc futures)
@@ -318,11 +318,10 @@ def get_help_text():
         "  /longbtc           → kế hoạch long BTC 1h\n"
         "  /longbtc 62000     → đánh giá lệnh long BTC entry 62000 (1h)\n"
         "  /shorteth 3500 4h  → đánh giá lệnh short ETH entry 3500 (4h)\n\n"
-        "Các lệnh /report:\n"
-        "  /report BTC      → chỉ BTC\n"
-        "  /report BTCDOM   → chỉ BTCDOM\n"
-        "  /report ETH      → ETH + BTC + BTCDOM gộp 1 block\n"
-        "  /report SOL, TRUMP, STRK, XRP, TAO, ICP, VIRTUAL cũng tương tự.\n\n"
+        "Có thể dùng /report với:\n"
+        "  BTC, BTCDOM (chỉ riêng nó)\n"
+        "  ETH, SOL, TRUMP, STRK, XRP, TAO, ICP, VIRTUAL\n"
+        "  → sẽ kèm luôn BTC + BTCDOM để dễ phân tích.\n\n"
         "Alert giá:\n"
         "  /alert BTC 1h below 60000\n"
         "  /alert BTC 1h above 65000\n"
@@ -389,7 +388,7 @@ def build_short_menu_kb():
 def build_report_menu_kb():
     """
     Nút BTC + BTCDOM: report riêng.
-    Các nút còn lại: report coin đó + BTC + BTCDOM (gộp 1 block).
+    Các nút còn lại: report coin đó + BTC + BTCDOM.
     """
     return InlineKeyboardMarkup(
         [
@@ -420,10 +419,11 @@ def build_report_menu_kb():
     )
 
 
-# ========= REPORT BUILDERS =========
-def build_single_report(sym_key: str) -> str:
+# ========= REPORT BUILDER =========
+def build_report_for_symbol_key(sym_key: str) -> str:
     """
-    Report 1 đồng duy nhất (bit BTC hoặc BTCDOM).
+    sym_key: BTC, ETH, SOL, BTCDOM, STRK, XRP, TAO, ICP, VIRTUAL
+    Dùng sym_key để hiển thị, normalize_symbol để gọi Binance.
     """
     key = sym_key.upper()
     symbol = normalize_symbol(key)
@@ -449,38 +449,6 @@ def build_single_report(sym_key: str) -> str:
     return "\n".join(lines)
 
 
-def build_combo_report(main_key: str) -> str:
-    """
-    Report combo: main + BTC + BTCDOM gộp 1 block,
-    group theo timeframe cho dễ so sánh.
-    """
-    main_key = main_key.upper()
-    coins = [main_key, "BTC", "BTCDOM"]
-    symbols = {k: normalize_symbol(k) for k in coins}
-
-    lines = [f"📊 Report *{main_key} + BTC + BTCDOM* (gộp 1 block)", ""]
-
-    for tf in TIMEFRAMES:
-        lines.append(f"⏱ *{tf}*")
-        for ck in coins:
-            sym = symbols[ck]
-            try:
-                ind = get_indicators(sym, tf)
-                lines.append(
-                    f"• {ck} ({sym}):\n"
-                    f"   • O/H/L/C: `{fmt_num(ind['open'])}` / `{fmt_num(ind['high'])}` / `{fmt_num(ind['low'])}` / `{fmt_num(ind['price'])}`\n"
-                    f"   • Δ vs close trước: `{fmt_num(ind['change_pct'], 2)}%`, Biên độ: `{fmt_num(ind['range_pct'], 2)}%`, Body%: `{fmt_num(ind['body_pct'], 2)}%`\n"
-                    f"   • Vol: `{fmt_num(ind['vol'], 2)}`, Vol MA20: `{fmt_num(ind['vol_ma20'], 2)}`\n"
-                    f"   • MA20/MA50: `{fmt_num(ind['ma20'])}` / `{fmt_num(ind['ma50'])}`; EMA20/EMA50: `{fmt_num(ind['ema20'])}` / `{fmt_num(ind['ema50'])}`\n"
-                    f"   • RSI14: `{fmt_num(ind['rsi14'], 2)}`, ATR14: `{fmt_num(ind['atr14'], 2)}`; Vị trí range 14 nến: `{fmt_num(ind['range_pos_14'], 2)}%`"
-                )
-            except Exception as e:
-                lines.append(f"• {ck}: lỗi {e}")
-        lines.append("")  # dòng trống ngăn giữa timeframe
-
-    return "\n".join(lines)
-
-
 # ========= BASIC COMMANDS =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -501,15 +469,19 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /report BTC      → chỉ BTC
     /report BTCDOM   → chỉ BTCDOM
-    /report ETH      → ETH + BTC + BTCDOM (gộp 1 block)
-    /report SOL,...  → tương tự ETH.
+    /report ETH      → ETH + BTC + BTCDOM
+    /report SOL      → SOL + BTC + BTCDOM
+    ...
     """
     sym_key = context.args[0].upper() if context.args else "BTC"
 
     if sym_key in ("BTC", "BTCDOM"):
-        text = build_single_report(sym_key)
+        text = build_report_for_symbol_key(sym_key)
     else:
-        text = build_combo_report(sym_key)
+        text_main = build_report_for_symbol_key(sym_key)
+        text_btc = build_report_for_symbol_key("BTC")
+        text_btcdom = build_report_for_symbol_key("BTCDOM")
+        text = f"{text_main}\n\n{text_btc}\n\n{text_btcdom}"
 
     await update.message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN)
 
@@ -845,9 +817,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         sym_key = sym_key.upper()
         if sym_key in ("BTC", "BTCDOM"):
-            text = build_single_report(sym_key)
+            text = build_report_for_symbol_key(sym_key)
         else:
-            text = build_combo_report(sym_key)
+            text_main = build_report_for_symbol_key(sym_key)
+            text_btc = build_report_for_symbol_key("BTC")
+            text_btcdom = build_report_for_symbol_key("BTCDOM")
+            text = f"{text_main}\n\n{text_btc}\n\n{text_btcdom}"
 
         await context.bot.send_message(
             chat_id,
