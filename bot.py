@@ -33,12 +33,16 @@ logger = logging.getLogger(__name__)
 TOKEN = "7264448035:AAGFd6K4lCTOpwVXsNe7yeAWeWDxJbulgus"
 
 # ========= CONFIG =========
-TIMEFRAMES = ["15m", "1h", "4h", "1d"]
+# Thêm 5m, giữ 15m, 1h, 4h, 1d
+TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
+
+# Bổ sung BTCDOM -> BTCDOMUSDT (Binance Futures index)
 FAV_SYMBOLS = {
     "BTC": "BTCUSDT",
     "ETH": "ETHUSDT",
     "SOL": "SOLUSDT",
     "TRUMP": "TRUMPUSDT",
+    "BTCDOM": "BTCDOMUSDT",
 }
 
 ALERTS_FILE = "alerts.json"
@@ -47,7 +51,7 @@ alerts = []
 
 # ========= BASIC UTILS =========
 def normalize_symbol(s: str):
-    """Chuẩn hoá BTC -> BTCUSDT, ETH -> ETHUSDT, v.v."""
+    """Chuẩn hoá BTC -> BTCUSDT, BTCDOM -> BTCDOMUSDT, v.v."""
     s = s.upper()
     return FAV_SYMBOLS.get(s, s)
 
@@ -74,10 +78,18 @@ def save_alerts():
 
 # ========= INDICATORS / DATA =========
 def get_klines(symbol="BTCUSDT", interval="1h", limit=100):
-    """Lấy nến từ Binance."""
-    url = "https://api.binance.com/api/v3/klines"
+    """
+    Lấy nến từ Binance.
+    - Với BTCDOMUSDT: dùng Binance Futures API.
+    - Các symbol còn lại: dùng Spot API như bình thường.
+    """
+    if symbol == "BTCDOMUSDT":
+        base_url = "https://fapi.binance.com/fapi/v1/klines"
+    else:
+        base_url = "https://api.binance.com/api/v3/klines"
+
     r = requests.get(
-        url,
+        base_url,
         params={"symbol": symbol, "interval": interval, "limit": limit},
         timeout=10,
     )
@@ -196,12 +208,17 @@ def fmt_num(n, d=4):
 
 
 def get_price(symbol):
-    """Lấy giá spot hiện tại."""
-    r = requests.get(
-        "https://api.binance.com/api/v3/ticker/price",
-        params={"symbol": symbol},
-        timeout=10,
-    )
+    """
+    Lấy giá hiện tại.
+    - BTCDOMUSDT: futures ticker
+    - Còn lại: spot ticker
+    """
+    if symbol == "BTCDOMUSDT":
+        url = "https://fapi.binance.com/fapi/v1/ticker/price"
+    else:
+        url = "https://api.binance.com/api/v3/ticker/price"
+
+    r = requests.get(url, params={"symbol": symbol}, timeout=10)
     r.raise_for_status()
     return float(r.json()["price"])
 
@@ -282,7 +299,7 @@ def get_help_text():
         "📌 *Các lệnh chính:*\n"
         "/start – mở menu chính\n"
         "/help – xem lệnh nhanh\n"
-        "/report BTC – report đa khung\n\n"
+        "/report BTC – report đa khung (5m, 15m, 1h, 4h, 1d)\n\n"
         "Lệnh long/short (có AI):\n"
         "  /longbtc [entry] [tf]\n"
         "  /shortbtc [entry] [tf]\n"
@@ -296,6 +313,7 @@ def get_help_text():
         "  /longbtc           → kế hoạch long BTC 1h\n"
         "  /longbtc 62000     → đánh giá lệnh long BTC entry 62000 (1h)\n"
         "  /shorteth 3500 4h  → đánh giá lệnh short ETH entry 3500 (4h)\n\n"
+        "Có thể dùng /report với: BTC, ETH, SOL, TRUMP, BTCDOM\n\n"
         "Alert giá:\n"
         "  /alert BTC 1h below 60000\n"
         "  /alert BTC 1h above 65000\n"
@@ -360,6 +378,7 @@ def build_short_menu_kb():
 
 
 def build_report_menu_kb():
+    # Thêm BTCDOM vào menu REPORT
     return InlineKeyboardMarkup(
         [
             [
@@ -369,6 +388,9 @@ def build_report_menu_kb():
             [
                 InlineKeyboardButton("SOL", callback_data="REPORT|SOL"),
                 InlineKeyboardButton("TRUMP", callback_data="REPORT|TRUMP"),
+            ],
+            [
+                InlineKeyboardButton("BTCDOM", callback_data="REPORT|BTCDOM"),
             ],
             [
                 InlineKeyboardButton("⬅ Quay lại", callback_data="MENU_MAIN"),
