@@ -33,16 +33,16 @@ logger = logging.getLogger(__name__)
 TOKEN = "8340989991:AAFbc5IiM5onGkvJDdzTrVzBgvseMrD-8xA"
 
 # ========= CONFIG =========
-# Thêm khung 5m, 15m, 30m, 1h, 4h, 12h, 1d, 1w cho TẤT CẢ các đồng
-TIMEFRAMES = ["5m", "15m", "1h", "4h", "12h", "1d"]
+# Thêm 5m, giữ 15m, 1h, 4h, 1d
+TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
 
-# Map các coin yêu thích -> symbol Binance (spot hoặc futures)
+# Bổ sung BTCDOM + STRK, XRP, TAO, ICP, VIRTUAL
 FAV_SYMBOLS = {
     "BTC": "BTCUSDT",
     "ETH": "ETHUSDT",
     "SOL": "SOLUSDT",
     "TRUMP": "TRUMPUSDT",
-    "BTCDOM": "BTCDOMUSDT",  # futures index
+    "BTCDOM": "BTCDOMUSDT",
     "STRK": "STRKUSDT",
     "XRP": "XRPUSDT",
     "TAO": "TAOUSDT",
@@ -304,7 +304,7 @@ def get_help_text():
         "📌 *Các lệnh chính:*\n"
         "/start – mở menu chính\n"
         "/help – xem lệnh nhanh\n"
-        "/report BTC – report đa khung (5m, 15m, 30m, 1h, 4h, 12h, 1d, 1w)\n\n"
+        "/report BTC – report đa khung (5m, 15m, 1h, 4h, 1d)\n\n"
         "Lệnh long/short (có AI):\n"
         "  /longbtc [entry] [tf]\n"
         "  /shortbtc [entry] [tf]\n"
@@ -319,9 +319,8 @@ def get_help_text():
         "  /longbtc 62000     → đánh giá lệnh long BTC entry 62000 (1h)\n"
         "  /shorteth 3500 4h  → đánh giá lệnh short ETH entry 3500 (4h)\n\n"
         "Có thể dùng /report với:\n"
-        "  BTC, BTCDOM (chỉ riêng nó)\n"
-        "  ETH, SOL, TRUMP, STRK, XRP, TAO, ICP, VIRTUAL\n"
-        "  → sẽ kèm luôn BTC + BTCDOM để dễ phân tích.\n\n"
+        "  BTC, ETH, SOL, TRUMP, BTCDOM,\n"
+        "  STRK, XRP, TAO, ICP, VIRTUAL\n\n"
         "Alert giá:\n"
         "  /alert BTC 1h below 60000\n"
         "  /alert BTC 1h above 65000\n"
@@ -386,22 +385,19 @@ def build_short_menu_kb():
 
 
 def build_report_menu_kb():
-    """
-    Nút BTC + BTCDOM: report riêng.
-    Các nút còn lại: report coin đó + BTC + BTCDOM.
-    """
+    # Thêm STRK, XRP, TAO, ICP, VIRTUAL vào menu REPORT
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton("BTC", callback_data="REPORT|BTC"),
-                InlineKeyboardButton("BTCDOM", callback_data="REPORT|BTCDOM"),
-            ],
-            [
                 InlineKeyboardButton("ETH", callback_data="REPORT|ETH"),
-                InlineKeyboardButton("SOL", callback_data="REPORT|SOL"),
             ],
             [
+                InlineKeyboardButton("SOL", callback_data="REPORT|SOL"),
                 InlineKeyboardButton("TRUMP", callback_data="REPORT|TRUMP"),
+            ],
+            [
+                InlineKeyboardButton("BTCDOM", callback_data="REPORT|BTCDOM"),
                 InlineKeyboardButton("STRK", callback_data="REPORT|STRK"),
             ],
             [
@@ -417,36 +413,6 @@ def build_report_menu_kb():
             ],
         ]
     )
-
-
-# ========= REPORT BUILDER =========
-def build_report_for_symbol_key(sym_key: str) -> str:
-    """
-    sym_key: BTC, ETH, SOL, BTCDOM, STRK, XRP, TAO, ICP, VIRTUAL
-    Dùng sym_key để hiển thị, normalize_symbol để gọi Binance.
-    """
-    key = sym_key.upper()
-    symbol = normalize_symbol(key)
-    lines = [f"📊 Report *{key}* ({symbol}):"]
-
-    for tf in TIMEFRAMES:
-        try:
-            ind = get_indicators(symbol, tf)
-            lines.append(
-                f"\n⏱ *{tf}*\n"
-                f"• O/H/L/C: `{fmt_num(ind['open'])}` / `{fmt_num(ind['high'])}` / `{fmt_num(ind['low'])}` / `{fmt_num(ind['price'])}`\n"
-                f"• Thay đổi vs close trước: `{fmt_num(ind['change_pct'], 2)}%`\n"
-                f"• Biên độ (H-L)/C: `{fmt_num(ind['range_pct'], 2)}%`, Body%: `{fmt_num(ind['body_pct'], 2)}%`\n"
-                f"• Volume: `{fmt_num(ind['vol'], 2)}`, Vol MA20: `{fmt_num(ind['vol_ma20'], 2)}`\n"
-                f"• MA20 / MA50: `{fmt_num(ind['ma20'])}` / `{fmt_num(ind['ma50'])}`\n"
-                f"• EMA20 / EMA50: `{fmt_num(ind['ema20'])}` / `{fmt_num(ind['ema50'])}`\n"
-                f"• RSI14: `{fmt_num(ind['rsi14'], 2)}`, ATR14: `{fmt_num(ind['atr14'], 2)}`\n"
-                f"• Vị trí trong range 14 nến: `{fmt_num(ind['range_pos_14'], 2)}%` (0% = đáy, 100% = đỉnh)"
-            )
-        except Exception as e:
-            lines.append(f"\n⏱ {tf}: lỗi {e}")
-
-    return "\n".join(lines)
 
 
 # ========= BASIC COMMANDS =========
@@ -466,24 +432,26 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /report BTC      → chỉ BTC
-    /report BTCDOM   → chỉ BTCDOM
-    /report ETH      → ETH + BTC + BTCDOM
-    /report SOL      → SOL + BTC + BTCDOM
-    ...
-    """
-    sym_key = context.args[0].upper() if context.args else "BTC"
-
-    if sym_key in ("BTC", "BTCDOM"):
-        text = build_report_for_symbol_key(sym_key)
-    else:
-        text_main = build_report_for_symbol_key(sym_key)
-        text_btc = build_report_for_symbol_key("BTC")
-        text_btcdom = build_report_for_symbol_key("BTCDOM")
-        text = f"{text_main}\n\n{text_btc}\n\n{text_btcdom}"
-
-    await update.message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN)
+    symbol_raw = context.args[0] if context.args else "BTC"
+    symbol = normalize_symbol(symbol_raw)
+    lines = [f"📊 Report *{symbol}*:"]
+    for tf in TIMEFRAMES:
+        try:
+            ind = get_indicators(symbol, tf)
+            lines.append(
+                f"\n⏱ *{tf}*\n"
+                f"• O/H/L/C: `{fmt_num(ind['open'])}` / `{fmt_num(ind['high'])}` / `{fmt_num(ind['low'])}` / `{fmt_num(ind['price'])}`\n"
+                f"• Thay đổi vs close trước: `{fmt_num(ind['change_pct'], 2)}%`\n"
+                f"• Biên độ (H-L)/C: `{fmt_num(ind['range_pct'], 2)}%`, Body%: `{fmt_num(ind['body_pct'], 2)}%`\n"
+                f"• Volume: `{fmt_num(ind['vol'], 2)}`, Vol MA20: `{fmt_num(ind['vol_ma20'], 2)}`\n"
+                f"• MA20 / MA50: `{fmt_num(ind['ma20'])}` / `{fmt_num(ind['ma50'])}`\n"
+                f"• EMA20 / EMA50: `{fmt_num(ind['ema20'])}` / `{fmt_num(ind['ema50'])}`\n"
+                f"• RSI14: `{fmt_num(ind['rsi14'], 2)}`, ATR14: `{fmt_num(ind['atr14'], 2)}`\n"
+                f"• Vị trí trong range 14 nến: `{fmt_num(ind['range_pos_14'], 2)}%` (0% = đáy, 100% = đỉnh)"
+            )
+        except Exception as e:
+            lines.append(f"\n⏱ {tf}: lỗi {e}")
+    await update.message.reply_text("\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
 
 
 # ========= PLAN BUILDERS =========
@@ -810,23 +778,33 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("REPORT|"):
         try:
-            _, sym_key = data.split("|")
+            _, sym = data.split("|")
         except ValueError:
             await context.bot.send_message(chat_id, "Callback REPORT lỗi format.")
             return
 
-        sym_key = sym_key.upper()
-        if sym_key in ("BTC", "BTCDOM"):
-            text = build_report_for_symbol_key(sym_key)
-        else:
-            text_main = build_report_for_symbol_key(sym_key)
-            text_btc = build_report_for_symbol_key("BTC")
-            text_btcdom = build_report_for_symbol_key("BTCDOM")
-            text = f"{text_main}\n\n{text_btc}\n\n{text_btcdom}"
+        symbol = normalize_symbol(sym)
+        lines = [f"📊 Report *{symbol}*:"]
+        for tf in TIMEFRAMES:
+            try:
+                ind = get_indicators(symbol, tf)
+                lines.append(
+                    f"\n⏱ *{tf}*\n"
+                    f"• O/H/L/C: `{fmt_num(ind['open'])}` / `{fmt_num(ind['high'])}` / `{fmt_num(ind['low'])}` / `{fmt_num(ind['price'])}`\n"
+                    f"• Thay đổi vs close trước: `{fmt_num(ind['change_pct'], 2)}%`\n"
+                    f"• Biên độ (H-L)/C: `{fmt_num(ind['range_pct'], 2)}%`, Body%: `{fmt_num(ind['body_pct'], 2)}%`\n"
+                    f"• Volume: `{fmt_num(ind['vol'], 2)}`, Vol MA20: `{fmt_num(ind['vol_ma20'], 2)}`\n"
+                    f"• MA20 / MA50: `{fmt_num(ind['ma20'])}` / `{fmt_num(ind['ma50'])}`\n"
+                    f"• EMA20 / EMA50: `{fmt_num(ind['ema20'])}` / `{fmt_num(ind['ema50'])}`\n"
+                    f"• RSI14: `{fmt_num(ind['rsi14'], 2)}`, ATR14: `{fmt_num(ind['atr14'], 2)}`\n"
+                    f"• Vị trí trong range 14 nến: `{fmt_num(ind['range_pos_14'], 2)}%` (0% = đáy, 100% = đỉnh)"
+                )
+            except Exception as e:
+                lines.append(f"\n⏱ {tf}: lỗi {e}")
 
         await context.bot.send_message(
             chat_id,
-            text,
+            "\n".join(lines),
             parse_mode=constants.ParseMode.MARKDOWN,
         )
 
