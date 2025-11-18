@@ -2,7 +2,7 @@ import logging
 import os
 import json
 import requests
-import time  # thêm để dùng timestamp
+import time  # dùng cho volume delta
 
 from telegram import (
     Update,
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 TOKEN = "8340989991:AAFbc5IiM5onGkvJDdzTrVzBgvseMrD-8xA"
 
 # ========= CONFIG =========
-# Thêm 5m, giữ 15m, 1h, 4h, 1d
+# Khung thời gian cho report
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
 
 # Bổ sung BTCDOM + STRK, XRP, TAO, ICP, VIRTUAL
@@ -86,17 +86,61 @@ def save_alerts():
 def get_klines(symbol="BTCUSDT", interval="1h", limit=100):
     """
     Lấy nến từ Binance.
-    - Với BTCDOMUSDT: dùng Binance Futures API.
-    - Các symbol còn lại: dùng Spot API như bình thường.
-    """
-    if symbol == "BTCDOMUSDT":
-        base_url = "https://fapi.binance.com/fapi/v1/klines"
-    else:
-        base_url = "https://api.binance.com/api/v3/klines"
 
+    Logic:
+    - Nếu là BTCDOMUSDT: thử Futures (fapi) với User-Agent, nếu Binance trả 418 thì báo lỗi dễ hiểu.
+    - Các symbol ...USDT khác:
+        + Thử Futures (fapi) trước (nến futures thường đủ dùng cho phân tích).
+        + Nếu fapi lỗi (không list futures / 418 / các kiểu) thì fallback về Spot (/api/v3/klines).
+    - Còn lại (không phải ...USDT): dùng Spot luôn.
+    """
+    params = {"symbol": symbol, "interval": interval, "limit": limit}
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    # Case đặc biệt: BTCDOMUSDT (dominance index)
+    if symbol == "BTCDOMUSDT":
+        try:
+            r = requests.get(
+                "https://fapi.binance.com/fapi/v1/klines",
+                params=params,
+                headers=headers,
+                timeout=10,
+            )
+            r.raise_for_status()
+            return r.json()
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 418:
+                # IP Render bị Binance từ chối cho BTCDOM
+                raise RuntimeError(
+                    "Binance trả 418 cho BTCDOMUSDT trên server này (IP Render bị chặn). "
+                    "Tạm thời bot không lấy được nến BTCDOM trên futures."
+                )
+            else:
+                raise
+
+    # Các cặp ...USDT khác: ưu tiên lấy nến Futures (fapi)
+    if symbol.endswith("USDT"):
+        try:
+            r = requests.get(
+                "https://fapi.binance.com/fapi/v1/klines",
+                params=params,
+                headers=headers,
+                timeout=10,
+            )
+            r.raise_for_status()
+            return r.json()
+        except requests.exceptions.HTTPError:
+            # Có thể symbol đó không có futures hoặc bị chặn → thử Spot
+            pass
+        except Exception:
+            # Lỗi network gì đó → thử Spot
+            pass
+
+    # Fallback: dùng Spot /api/v3/klines
     r = requests.get(
-        base_url,
-        params={"symbol": symbol, "interval": interval, "limit": limit},
+        "https://api.binance.com/api/v3/klines",
+        params=params,
+        headers=headers,
         timeout=10,
     )
     r.raise_for_status()
@@ -375,10 +419,8 @@ def get_volume_delta(symbol, minutes):
                 qty = float(t["q"])
                 is_buyer_maker = t["m"]
                 if is_buyer_maker:
-                    # người bán chủ động hit bid
                     sell_vol += qty
                 else:
-                    # người mua chủ động hit ask
                     buy_vol += qty
         net = buy_vol - sell_vol
         return buy_vol, sell_vol, net
@@ -652,7 +694,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol_raw = context.args[0] if context.args else "BTC"
     symbol = normalize_symbol(symbol_raw)
     text = build_full_report_text(symbol)
-    # Report này khá dài nhưng 1 coin + 5 khung vẫn < 4096 trong đa số trường hợp.
     await update.message.reply_text(
         text,
         parse_mode=constants.ParseMode.MARKDOWN,
@@ -798,7 +839,6 @@ async def suggest_plan(
             f"{ai_text}"
         )
 
-        # Không dùng Markdown ở đây để tránh lỗi parse do AI sinh ký tự đặc biệt
         await context.bot.send_message(chat_id=chat_id, text=text)
 
     except Exception as e:
