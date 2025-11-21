@@ -9,6 +9,7 @@ from telegram import (
     constants,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    BotCommand,
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -16,11 +17,6 @@ from telegram.ext import (
     ContextTypes,
     CallbackQueryHandler,
 )
-
-from groq import Groq
-
-# ========= GROQ API (LLaMA 3.1 70B) =========
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 # ========= LOGGING =========
 logging.basicConfig(
@@ -37,7 +33,7 @@ TOKEN = "8340989991:AAFbc5IiM5onGkvJDdzTrVzBgvseMrD-8xA"
 # Khung thời gian cho report
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
 
-# Bổ sung BTCDOM + STRK, XRP, TAO, ICP, VIRTUAL
+# Các symbol yêu thích
 FAV_SYMBOLS = {
     "BTC": "BTCUSDT",
     "ETH": "ETHUSDT",
@@ -80,6 +76,11 @@ def save_alerts():
         json.dump(alerts, open(ALERTS_FILE, "w"))
     except Exception:
         pass
+
+
+def fmt_num(n, d=4):
+    """Format số cho đẹp."""
+    return f"{n:.{d}f}" if n is not None else "N/A"
 
 
 # ========= INDICATORS / DATA TỪ BINANCE =========
@@ -193,7 +194,7 @@ def calc_atr(highs, lows, closes, length=14):
 
 
 def get_indicators(symbol, tf):
-    """Lấy full bộ thông số cho report & plan (OHLC, MA, RSI, ATR, Vol...)."""
+    """Lấy full bộ thông số cho report (OHLC, MA, RSI, ATR, Vol...)."""
     data = get_klines(symbol, tf, 100)
     opens = [float(x[1]) for x in data]
     highs = [float(x[2]) for x in data]
@@ -252,11 +253,6 @@ def get_indicators(symbol, tf):
     }
 
 
-def fmt_num(n, d=4):
-    """Format số cho đẹp."""
-    return f"{n:.{d}f}" if n is not None else "N/A"
-
-
 def get_price(symbol):
     """
     Lấy giá hiện tại.
@@ -274,7 +270,7 @@ def get_price(symbol):
 
 
 def get_swing_levels(symbol, interval="1h", lookback=40):
-    """Tính swing high & swing low gần nhất."""
+    """(Giữ lại nếu sau này cần) – hiện tại chưa dùng trong report."""
     data = get_klines(symbol, interval, lookback)
     highs = [float(x[2]) for x in data]
     lows = [float(x[3]) for x in data]
@@ -282,7 +278,7 @@ def get_swing_levels(symbol, interval="1h", lookback=40):
     return max(highs), min(lows), closes[-1]
 
 
-# ========= THÊM: FUNDING, OI, ORDERBOOK, DELTA =========
+# ========= FUNDING, OI, ORDERBOOK, DELTA =========
 def get_funding_rates(symbol):
     """
     Funding rate:
@@ -429,90 +425,14 @@ def get_volume_delta(symbol, minutes):
         return None, None, None
 
 
-# ========= AI LLaMA 3.1 70B (Groq) =========
-def ai_trade_view(
-    symbol,
-    side,
-    tf,
-    entry,
-    price,
-    sl,
-    tp1,
-    tp2,
-    rsi,
-    ma20,
-    ma50,
-    sh,
-    slv,
-):
-    prompt = f"""
-Phân tích crypto tham khảo:
-- Symbol: {symbol}
-- Phe: {side.upper()}
-- Khung thời gian: {tf}
-- Entry: {entry}
-- Giá hiện tại: {price}
-- SL: {sl}
-- TP1: {tp1}
-- TP2: {tp2}
-- Swing high (kháng cự gần): {sh}
-- Swing low (hỗ trợ gần): {slv}
-- RSI: {rsi}
-- MA20: {ma20}
-- MA50: {ma50}
-
-Yêu cầu:
-- Viết 6–10 dòng bằng tiếng Việt, giọng thân thiện, kỹ thuật dễ hiểu.
-- Không phím kèo, không all-in, không hứa chắc thắng.
-- Chỉ ra:
-  • Xu hướng nghiêng về bull/bear/sideway dựa trên MA và RSI.
-  • Gợi ý cách nhìn vùng entry này: đu đỉnh, mua đáy, hay vùng giữa range.
-  • Khi nào nên coi setup này là fail (mất hỗ trợ/kháng cự nào).
-  • 1–2 lưu ý về quản lý rủi ro (giảm size, vào từng phần, v.v.).
-"""
-
-    try:
-        resp = groq_client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Bạn là chuyên gia phân tích crypto, chỉ phân tích kỹ thuật THAM KHẢO, không cho lời khuyên đầu tư.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.35,
-            max_tokens=500,
-        )
-        return resp.choices[0].message.content
-    except Exception as e:
-        logger.error("AI error: %s", e)
-        return f"(AI lỗi: {e})"
-
-
 # ========= HELP / MENU TEXT =========
 def get_help_text():
     return (
         "📌 *Các lệnh chính:*\n"
         "/start – mở menu chính\n"
         "/help – xem lệnh nhanh\n"
-        "/report BTC – report đa khung (5m, 15m, 1h, 4h, 1d)\n\n"
-        "Lệnh long/short (có AI):\n"
-        "  /longbtc [entry] [tf]\n"
-        "  /shortbtc [entry] [tf]\n"
-        "  /longeth [entry] [tf]\n"
-        "  /shorteth [entry] [tf]\n"
-        "  /longsol [entry] [tf]\n"
-        "  /shortsol [entry] [tf]\n"
-        "  /longtrump [entry] [tf]\n"
-        "  /shorttrump [entry] [tf]\n\n"
-        "Ví dụ:\n"
-        "  /longbtc           → kế hoạch long BTC 1h\n"
-        "  /longbtc 62000     → đánh giá lệnh long BTC entry 62000 (1h)\n"
-        "  /shorteth 3500 4h  → đánh giá lệnh short ETH entry 3500 (4h)\n\n"
-        "Có thể dùng /report với:\n"
-        "  BTC, ETH, SOL, TRUMP, BTCDOM,\n"
-        "  STRK, XRP, TAO, ICP, VIRTUAL\n\n"
+        "/report BTC – report đa khung (5m, 15m, 1h, 4h, 1d)\n"
+        "/core – report combo BTC + ETH + BTCDOM\n\n"
         "Alert giá:\n"
         "  /alert BTC 1h below 60000\n"
         "  /alert BTC 1h above 65000\n"
@@ -520,16 +440,12 @@ def get_help_text():
 
 
 def get_main_menu_text():
-    return "🏠 *Menu crypto bot (Groq LLaMA 3.1 70B)*\nChọn chức năng:"
+    return "🏠 *Menu crypto bot – chế độ REPORT ONLY*\nChọn chức năng:"
 
 
 def build_main_menu_kb():
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton("📈 Long", callback_data="MENU_LONG"),
-                InlineKeyboardButton("📉 Short", callback_data="MENU_SHORT"),
-            ],
             [
                 InlineKeyboardButton("📊 Report", callback_data="MENU_REPORT"),
             ],
@@ -540,44 +456,8 @@ def build_main_menu_kb():
     )
 
 
-def build_long_menu_kb():
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("BTC 1h", callback_data="PLAN|long|BTC|1h"),
-                InlineKeyboardButton("ETH 1h", callback_data="PLAN|long|ETH|1h"),
-            ],
-            [
-                InlineKeyboardButton("SOL 1h", callback_data="PLAN|long|SOL|1h"),
-                InlineKeyboardButton("TRUMP 1h", callback_data="PLAN|long|TRUMP|1h"),
-            ],
-            [
-                InlineKeyboardButton("⬅ Quay lại", callback_data="MENU_MAIN"),
-            ],
-        ]
-    )
-
-
-def build_short_menu_kb():
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("BTC 1h", callback_data="PLAN|short|BTC|1h"),
-                InlineKeyboardButton("ETH 1h", callback_data="PLAN|short|ETH|1h"),
-            ],
-            [
-                InlineKeyboardButton("SOL 1h", callback_data="PLAN|short|SOL|1h"),
-                InlineKeyboardButton("TRUMP 1h", callback_data="PLAN|short|TRUMP|1h"),
-            ],
-            [
-                InlineKeyboardButton("⬅ Quay lại", callback_data="MENU_MAIN"),
-            ],
-        ]
-    )
-
-
 def build_report_menu_kb():
-    # Thêm STRK, XRP, TAO, ICP, VIRTUAL vào menu REPORT
+    # Thêm combo BTC+ETH+BTCDOM
     return InlineKeyboardMarkup(
         [
             [
@@ -601,13 +481,18 @@ def build_report_menu_kb():
                 InlineKeyboardButton("VIRTUAL", callback_data="REPORT|VIRTUAL"),
             ],
             [
+                InlineKeyboardButton(
+                    "🔥 BTC + ETH + BTCDOM", callback_data="REPORT3|CORE"
+                ),
+            ],
+            [
                 InlineKeyboardButton("⬅ Quay lại", callback_data="MENU_MAIN"),
             ],
         ]
     )
 
 
-# ========= BUILD REPORT FULL (OHLC + FUNDING + OI + ORDERBOOK + DELTA) =========
+# ========= BUILD REPORT =========
 def build_full_report_text(symbol: str) -> str:
     lines = [f"📊 Report *{symbol}*:"]
     # 1) OHLC + indicators theo từng timeframe
@@ -663,15 +548,27 @@ def build_full_report_text(symbol: str) -> str:
             f"• Delta {label}: buy `{fmt_num(b, 2)}`, sell `{fmt_num(s, 2)}`, net `{fmt_num(n, 2)}`"
         )
 
-    # 6) Liquidation heatmap (placeholder)
-    lines.append(
-        "\n🔥 *Liquidation Heatmap:* (placeholder)\n"
-        "• Liquidation cluster gần nhất: (cần API riêng như Coinalyze / Coinglass)\n"
-        "• Liquidity lớn ở trên: ...\n"
-        "• Liquidity lớn ở dưới: ..."
-    )
-
     return "\n".join(lines)
+
+
+def build_core_combo_report_text() -> str:
+    """Report combo BTCUSDT + ETHUSDT + BTCDOMUSDT."""
+    symbols = ["BTCUSDT", "ETHUSDT", "BTCDOMUSDT"]
+    name_map = {
+        "BTCUSDT": "BTC",
+        "ETHUSDT": "ETH",
+        "BTCDOMUSDT": "BTCDOM",
+    }
+    blocks = []
+    for sym in symbols:
+        try:
+            txt = build_full_report_text(sym)
+            label = name_map.get(sym, sym)
+            blocks.append(f"===== {label} =====\n{txt}")
+        except Exception as e:
+            blocks.append(f"===== {sym} =====\nLỗi report: {e}")
+    # Ghép 3 block; có thể khá dài nhưng vẫn < 4096 trong đa số trường hợp
+    return "\n\n\n".join(blocks)
 
 
 # ========= BASIC COMMANDS =========
@@ -700,191 +597,13 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ========= PLAN BUILDERS =========
-def build_long_plan(symbol, tf, entry=None):
-    sh, slv, close = get_swing_levels(symbol, tf)
-    ind = get_indicators(symbol, tf)
-    price = close
-    use_entry = entry if entry is not None else price
-    sl = min(slv, use_entry * 0.995)
-    risk = use_entry - sl
-    if risk <= 0:
-        risk = use_entry * 0.01
-        sl = use_entry - risk
-    tp1 = use_entry + risk * 1.5
-    tp2 = use_entry + risk * 2
-    return {
-        "entry": use_entry,
-        "price": price,
-        "sl": sl,
-        "tp1": tp1,
-        "tp2": tp2,
-        "sh": sh,
-        "slv": slv,
-        "rsi": ind["rsi14"],
-        "ma20": ind["ma20"],
-        "ma50": ind["ma50"],
-    }
-
-
-def build_short_plan(symbol, tf, entry=None):
-    sh, slv, close = get_swing_levels(symbol, tf)
-    ind = get_indicators(symbol, tf)
-    price = close
-    use_entry = entry if entry is not None else price
-    sl = max(sh, use_entry * 1.005)
-    risk = sl - use_entry
-    if risk <= 0:
-        risk = use_entry * 0.01
-        sl = use_entry + risk
-    tp1 = use_entry - risk * 1.5
-    tp2 = use_entry - risk * 2
-    return {
-        "entry": use_entry,
-        "price": price,
-        "sl": sl,
-        "tp1": tp1,
-        "tp2": tp2,
-        "sh": sh,
-        "slv": slv,
-        "rsi": ind["rsi14"],
-        "ma20": ind["ma20"],
-        "ma50": ind["ma50"],
-    }
-
-
-def parse_entry_tf(args):
-    """
-    /longbtc
-    /longbtc 62000
-    /longbtc 62000 4h
-    /longbtc 4h 62000
-    """
-    if not args:
-        return None, "1h"
-    if len(args) == 1:
-        a = args[0]
-        try:
-            return float(a), "1h"
-        except ValueError:
-            return None, a
-    a0, a1 = args[0], args[1]
-    e0 = e1 = None
-    try:
-        e0 = float(a0)
-    except ValueError:
-        pass
-    try:
-        e1 = float(a1)
-    except ValueError:
-        pass
-    if e0 is not None and e1 is None:
-        return e0, a1
-    if e1 is not None and e0 is None:
-        return e1, a0
-    return None, a0
-
-
-# ========= SUGGEST PLAN (LONG/SHORT) =========
-async def suggest_plan(
-    context: ContextTypes.DEFAULT_TYPE,
-    chat_id: int,
-    sym_key: str,
-    side: str,
-    tf: str,
-    entry=None,
-):
-    symbol = normalize_symbol(sym_key)
-    try:
-        if side == "long":
-            plan = build_long_plan(symbol, tf, entry)
-        else:
-            plan = build_short_plan(symbol, tf, entry)
-
-        e = plan["entry"]
-        p = plan["price"]
-        sl = plan["sl"]
-        tp1 = plan["tp1"]
-        tp2 = plan["tp2"]
-        sh = plan["sh"]
-        slv = plan["slv"]
-        rsi = plan["rsi"]
-        ma20 = plan["ma20"]
-        ma50 = plan["ma50"]
-
-        if entry is not None:
-            pnl = (p - e) / e * 100 if side == "long" else (e - p) / e * 100
-            pnl_txt = f"Lệnh hiện tại ~ {pnl:+.2f}% so với entry\n"
-        else:
-            pnl_txt = "Chưa có entry thật, đây là kế hoạch tham khảo.\n"
-
-        ai_text = ai_trade_view(
-            symbol, side, tf, e, p, sl, tp1, tp2, rsi, ma20, ma50, sh, slv
-        )
-
-        text = (
-            f"📌 {side.upper()} {symbol} ({tf})\n\n"
-            f"Giá hiện tại: {fmt_num(p)}\n"
-            f"Entry xét: {fmt_num(e)}\n"
-            f"{pnl_txt}\n"
-            f"Swing high: {fmt_num(sh)}\n"
-            f"Swing low : {fmt_num(slv)}\n\n"
-            f"SL : {fmt_num(sl)}\n"
-            f"TP1: {fmt_num(tp1)}\n"
-            f"TP2: {fmt_num(tp2)}\n\n"
-            f"MA20: {fmt_num(ma20)}\n"
-            f"MA50: {fmt_num(ma50)}\n"
-            f"RSI14: {fmt_num(rsi, 2)}\n\n"
-            f"🤖 Góc nhìn AI (Groq LLaMA 3.1 70B, chỉ THAM KHẢO):\n"
-            f"{ai_text}"
-        )
-
-        await context.bot.send_message(chat_id=chat_id, text=text)
-
-    except Exception as e:
-        logger.error("suggest_plan error: %s", e)
-        await context.bot.send_message(chat_id=chat_id, text=f"Lỗi phân tích: {e}")
-
-
-# ========= LONG/SHORT COMMANDS =========
-async def longbtc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    entry, tf = parse_entry_tf(context.args)
-    await suggest_plan(context, update.effective_chat.id, "BTC", "long", tf, entry)
-
-
-async def shortbtc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    entry, tf = parse_entry_tf(context.args)
-    await suggest_plan(context, update.effective_chat.id, "BTC", "short", tf, entry)
-
-
-async def longeth(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    entry, tf = parse_entry_tf(context.args)
-    await suggest_plan(context, update.effective_chat.id, "ETH", "long", tf, entry)
-
-
-async def shorteth(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    entry, tf = parse_entry_tf(context.args)
-    await suggest_plan(context, update.effective_chat.id, "ETH", "short", tf, entry)
-
-
-async def longsol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    entry, tf = parse_entry_tf(context.args)
-    await suggest_plan(context, update.effective_chat.id, "SOL", "long", tf, entry)
-
-
-async def shortsol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    entry, tf = parse_entry_tf(context.args)
-    await suggest_plan(context, update.effective_chat.id, "SOL", "short", tf, entry)
-
-
-async def longtrump(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    entry, tf = parse_entry_tf(context.args)
-    await suggest_plan(context, update.effective_chat.id, "TRUMP", "long", tf, entry)
-
-
-async def shorttrump(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    entry, tf = parse_entry_tf(context.args)
-    await suggest_plan(context, update.effective_chat.id, "TRUMP", "short", tf, entry)
+async def core(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lệnh /core → BTC + ETH + BTCDOM một phát."""
+    text = build_core_combo_report_text()
+    await update.message.reply_text(
+        text,
+        parse_mode=constants.ParseMode.MARKDOWN,
+    )
 
 
 # ========= ALERTS (GIÁ) =========
@@ -988,18 +707,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=build_main_menu_kb(),
         )
 
-    elif data == "MENU_LONG":
-        await query.edit_message_text(
-            "Chọn coin để LONG (1h):",
-            reply_markup=build_long_menu_kb(),
-        )
-
-    elif data == "MENU_SHORT":
-        await query.edit_message_text(
-            "Chọn coin để SHORT (1h):",
-            reply_markup=build_short_menu_kb(),
-        )
-
     elif data == "MENU_REPORT":
         await query.edit_message_text(
             "Chọn coin để xem report:",
@@ -1012,14 +719,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             get_help_text(),
             parse_mode=constants.ParseMode.MARKDOWN,
         )
-
-    elif data.startswith("PLAN|"):
-        try:
-            _, side, sym, tf = data.split("|")
-        except ValueError:
-            await context.bot.send_message(chat_id, "Callback PLAN lỗi format.")
-            return
-        await suggest_plan(context, chat_id, sym, side, tf)
 
     elif data.startswith("REPORT|"):
         try:
@@ -1036,27 +735,47 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=constants.ParseMode.MARKDOWN,
         )
 
+    elif data == "REPORT3|CORE":
+        text = build_core_combo_report_text()
+        await context.bot.send_message(
+            chat_id,
+            text,
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+
+
+# ========= SET SLASH COMMANDS CHO GỢI Ý "/" =========
+async def post_init(app):
+    commands = [
+        BotCommand("start", "Mở menu chính"),
+        BotCommand("help", "Xem hướng dẫn nhanh"),
+        BotCommand("report", "Báo cáo 1 đồng (VD: /report BTC)"),
+        BotCommand("core", "Report BTC + ETH + BTCDOM"),
+        BotCommand("alert", "Đặt alert giá (VD: /alert BTC 1h below 60000)"),
+    ]
+    try:
+        await app.bot.set_my_commands(commands)
+        logger.info("Slash commands set successfully.")
+    except Exception as e:
+        logger.warning("Failed to set slash commands: %s", e)
+
 
 # ========= MAIN =========
 if __name__ == "__main__":
     load_alerts()
 
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
     # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("report", report))
-
-    app.add_handler(CommandHandler("longbtc", longbtc))
-    app.add_handler(CommandHandler("shortbtc", shortbtc))
-    app.add_handler(CommandHandler("longeth", longeth))
-    app.add_handler(CommandHandler("shorteth", shorteth))
-    app.add_handler(CommandHandler("longsol", longsol))
-    app.add_handler(CommandHandler("shortsol", shortsol))
-    app.add_handler(CommandHandler("longtrump", longtrump))
-    app.add_handler(CommandHandler("shorttrump", shorttrump))
-
+    app.add_handler(CommandHandler("core", core))
     app.add_handler(CommandHandler("alert", alert_cmd))
 
     # Inline callbacks
