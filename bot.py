@@ -83,7 +83,7 @@ def fmt_num(n, d=4):
     return f"{n:.{d}f}" if n is not None else "N/A"
 
 
-# ========= INDICATORS / DATA TỪ BINANCE =========
+# ========= BINANCE DATA & INDICATORS =========
 def get_klines(symbol="BTCUSDT", interval="1h", limit=100):
     """
     Lấy nến từ Binance.
@@ -91,8 +91,8 @@ def get_klines(symbol="BTCUSDT", interval="1h", limit=100):
     Logic:
     - Nếu là BTCDOMUSDT: thử Futures (fapi) với User-Agent, nếu Binance trả 418 thì báo lỗi dễ hiểu.
     - Các symbol ...USDT khác:
-        + Thử Futures (fapi) trước (nến futures thường đủ dùng cho phân tích).
-        + Nếu fapi lỗi (không list futures / 418 / các kiểu) thì fallback về Spot (/api/v3/klines).
+        + Thử Futures (fapi) trước.
+        + Nếu fapi lỗi thì fallback về Spot (/api/v3/klines).
     - Còn lại (không phải ...USDT): dùng Spot luôn.
     """
     params = {"symbol": symbol, "interval": interval, "limit": limit}
@@ -111,9 +111,9 @@ def get_klines(symbol="BTCUSDT", interval="1h", limit=100):
             return r.json()
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 418:
-                # IP Render bị Binance từ chối cho BTCDOM
+                # IP server bị Binance từ chối cho BTCDOM
                 raise RuntimeError(
-                    "Binance trả 418 cho BTCDOMUSDT trên server này (IP Render bị chặn). "
+                    "Binance trả 418 cho BTCDOMUSDT trên server này (IP bị chặn). "
                     "Tạm thời bot không lấy được nến BTCDOM trên futures."
                 )
             else:
@@ -269,16 +269,6 @@ def get_price(symbol):
     return float(r.json()["price"])
 
 
-def get_swing_levels(symbol, interval="1h", lookback=40):
-    """(Giữ lại nếu sau này cần) – hiện tại chưa dùng trong report."""
-    data = get_klines(symbol, interval, lookback)
-    highs = [float(x[2]) for x in data]
-    lows = [float(x[3]) for x in data]
-    closes = [float(x[4]) for x in data]
-    return max(highs), min(lows), closes[-1]
-
-
-# ========= FUNDING, OI, ORDERBOOK, DELTA =========
 def get_funding_rates(symbol):
     """
     Funding rate:
@@ -430,12 +420,14 @@ def get_help_text():
     return (
         "📌 *Các lệnh chính:*\n"
         "/start – mở menu chính\n"
-        "/help – xem lệnh nhanh\n"
-        "/report BTC – report đa khung (5m, 15m, 1h, 4h, 1d)\n"
-        "/core – report combo BTC + ETH + BTCDOM\n\n"
+        "/help – xem hướng dẫn nhanh\n"
+        "/core – report combo BTC + ETH + BTCDOM (3 tin riêng)\n"
+        "/report BTC – report đa khung cho 1 đồng\n"
+        "/btc, /eth, /sol, /trump, /btcdom, /strk, /xrp, /tao, /icp, /virtual – report nhanh từng coin\n\n"
         "Alert giá:\n"
         "  /alert BTC 1h below 60000\n"
-        "  /alert BTC 1h above 65000\n"
+        "  /alert BTC 1h above 65000\n\n"
+        "⚠️ Các tin nhắn REPORT sẽ tự xoá sau 5 phút."
     )
 
 
@@ -457,9 +449,18 @@ def build_main_menu_kb():
 
 
 def build_report_menu_kb():
-    # Thêm combo BTC+ETH+BTCDOM
+    """
+    Menu report:
+    - Hàng đầu: combo BTC + ETH + BTCDOM
+    - Các hàng dưới: từng coin
+    """
     return InlineKeyboardMarkup(
         [
+            [
+                InlineKeyboardButton(
+                    "🔥 BTC + ETH + BTCDOM", callback_data="REPORT3|CORE"
+                ),
+            ],
             [
                 InlineKeyboardButton("BTC", callback_data="REPORT|BTC"),
                 InlineKeyboardButton("ETH", callback_data="REPORT|ETH"),
@@ -481,15 +482,37 @@ def build_report_menu_kb():
                 InlineKeyboardButton("VIRTUAL", callback_data="REPORT|VIRTUAL"),
             ],
             [
-                InlineKeyboardButton(
-                    "🔥 BTC + ETH + BTCDOM", callback_data="REPORT3|CORE"
-                ),
-            ],
-            [
                 InlineKeyboardButton("⬅ Quay lại", callback_data="MENU_MAIN"),
             ],
         ]
     )
+
+
+# ========= AUTO DELETE REPORT MESSAGE =========
+async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    chat_id = job.chat_id
+    message_id = job.data["message_id"]
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception as e:
+        logger.warning("Failed to delete message: %s", e)
+
+
+def schedule_auto_delete(context: ContextTypes.DEFAULT_TYPE, message, delay: int = 300):
+    """
+    Đặt job tự xoá message sau <delay> giây (mặc định 300s = 5 phút).
+    Chỉ dùng cho các tin nhắn REPORT.
+    """
+    try:
+        context.job_queue.run_once(
+            delete_message_job,
+            when=delay,
+            chat_id=message.chat_id,
+            data={"message_id": message.message_id},
+        )
+    except Exception as e:
+        logger.warning("Failed to schedule auto delete: %s", e)
 
 
 # ========= BUILD REPORT =========
@@ -551,26 +574,6 @@ def build_full_report_text(symbol: str) -> str:
     return "\n".join(lines)
 
 
-def build_core_combo_report_text() -> str:
-    """Report combo BTCUSDT + ETHUSDT + BTCDOMUSDT."""
-    symbols = ["BTCUSDT", "ETHUSDT", "BTCDOMUSDT"]
-    name_map = {
-        "BTCUSDT": "BTC",
-        "ETHUSDT": "ETH",
-        "BTCDOMUSDT": "BTCDOM",
-    }
-    blocks = []
-    for sym in symbols:
-        try:
-            txt = build_full_report_text(sym)
-            label = name_map.get(sym, sym)
-            blocks.append(f"===== {label} =====\n{txt}")
-        except Exception as e:
-            blocks.append(f"===== {sym} =====\nLỗi report: {e}")
-    # Ghép 3 block; có thể khá dài nhưng vẫn < 4096 trong đa số trường hợp
-    return "\n\n\n".join(blocks)
-
-
 # ========= BASIC COMMANDS =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -588,22 +591,78 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /report BTC – report 1 đồng bất kỳ (gõ symbol làm arg).
+    Tin nhắn trả về sẽ auto xoá sau 5 phút.
+    """
     symbol_raw = context.args[0] if context.args else "BTC"
     symbol = normalize_symbol(symbol_raw)
     text = build_full_report_text(symbol)
-    await update.message.reply_text(
+    msg = await update.message.reply_text(
         text,
         parse_mode=constants.ParseMode.MARKDOWN,
     )
+    schedule_auto_delete(context, msg)
 
 
 async def core(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lệnh /core → BTC + ETH + BTCDOM một phát."""
-    text = build_core_combo_report_text()
-    await update.message.reply_text(
+    """
+    Lệnh /core → gửi 3 tin riêng: BTC, ETH, BTCDOM
+    để tránh lỗi 'message is too long'.
+    Các tin này sẽ auto xoá sau 5 phút.
+    """
+    symbols = ["BTCUSDT", "ETHUSDT", "BTCDOMUSDT"]
+    name_map = {
+        "BTCUSDT": "BTC",
+        "ETHUSDT": "ETH",
+        "BTCDOMUSDT": "BTCDOM",
+    }
+
+    for sym in symbols:
+        label = name_map.get(sym, sym)
+        try:
+            text = build_full_report_text(sym)
+            msg = await update.message.reply_text(
+                f"===== {label} =====\n{text}",
+                parse_mode=constants.ParseMode.MARKDOWN,
+            )
+            schedule_auto_delete(context, msg)
+        except Exception as e:
+            msg = await update.message.reply_text(
+                f"===== {label} =====\nLỗi report: {e}",
+                parse_mode=constants.ParseMode.MARKDOWN,
+            )
+            schedule_auto_delete(context, msg)
+
+
+# ========= COIN SHORT COMMANDS (/btc /eth ...) =========
+async def coin_report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handler chung cho các lệnh:
+    /btc /eth /sol /trump /btcdom /strk /xrp /tao /icp /virtual
+    """
+    cmd = update.message.text.lstrip("/").split()[0].upper()
+
+    cmd_to_symbol = {
+        "BTC": "BTCUSDT",
+        "ETH": "ETHUSDT",
+        "SOL": "SOLUSDT",
+        "TRUMP": "TRUMPUSDT",
+        "BTCDOM": "BTCDOMUSDT",
+        "STRK": "STRKUSDT",
+        "XRP": "XRPUSDT",
+        "TAO": "TAOUSDT",
+        "ICP": "ICPUSDT",
+        "VIRTUAL": "VIRTUALUSDT",
+    }
+
+    symbol = cmd_to_symbol.get(cmd, "BTCUSDT")
+    text = build_full_report_text(symbol)
+    msg = await update.message.reply_text(
         text,
         parse_mode=constants.ParseMode.MARKDOWN,
     )
+    schedule_auto_delete(context, msg)
 
 
 # ========= ALERTS (GIÁ) =========
@@ -721,6 +780,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data.startswith("REPORT|"):
+        # Report 1 coin qua inline button
         try:
             _, sym = data.split("|")
         except ValueError:
@@ -729,29 +789,62 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         symbol = normalize_symbol(sym)
         text = build_full_report_text(symbol)
-        await context.bot.send_message(
+        msg = await context.bot.send_message(
             chat_id,
             text,
             parse_mode=constants.ParseMode.MARKDOWN,
         )
+        schedule_auto_delete(context, msg)
 
     elif data == "REPORT3|CORE":
-        text = build_core_combo_report_text()
-        await context.bot.send_message(
-            chat_id,
-            text,
-            parse_mode=constants.ParseMode.MARKDOWN,
-        )
+        # Gửi 3 tin: BTC, ETH, BTCDOM – auto xoá sau 5 phút
+        symbols = ["BTCUSDT", "ETHUSDT", "BTCDOMUSDT"]
+        name_map = {
+            "BTCUSDT": "BTC",
+            "ETHUSDT": "ETH",
+            "BTCDOMUSDT": "BTCDOM",
+        }
+
+        for sym in symbols:
+            label = name_map.get(sym, sym)
+            try:
+                text = build_full_report_text(sym)
+                msg = await context.bot.send_message(
+                    chat_id,
+                    f"===== {label} =====\n{text}",
+                    parse_mode=constants.ParseMode.MARKDOWN,
+                )
+                schedule_auto_delete(context, msg)
+            except Exception as e:
+                msg = await context.bot.send_message(
+                    chat_id,
+                    f"===== {label} =====\nLỗi report: {e}",
+                    parse_mode=constants.ParseMode.MARKDOWN,
+                )
+                schedule_auto_delete(context, msg)
 
 
 # ========= SET SLASH COMMANDS CHO GỢI Ý "/" =========
 async def post_init(app):
     commands = [
+        # Ưu tiên core trước
+        BotCommand("core", "Report BTC + ETH + BTCDOM (3 tin)"),
+        # Report từng coin
+        BotCommand("btc", "Report BTC"),
+        BotCommand("eth", "Report ETH"),
+        BotCommand("sol", "Report SOL"),
+        BotCommand("trump", "Report TRUMP"),
+        BotCommand("btcdom", "Report BTCDOM (BTC.D)"),
+        BotCommand("strk", "Report STRK"),
+        BotCommand("xrp", "Report XRP"),
+        BotCommand("tao", "Report TAO"),
+        BotCommand("icp", "Report ICP"),
+        BotCommand("virtual", "Report VIRTUAL"),
+        # Lệnh chung & tiện ích
+        BotCommand("report", "Báo cáo 1 đồng bất kỳ (VD: /report BTC)"),
+        BotCommand("alert", "Đặt alert giá (VD: /alert BTC 1h below 60000)"),
         BotCommand("start", "Mở menu chính"),
         BotCommand("help", "Xem hướng dẫn nhanh"),
-        BotCommand("report", "Báo cáo 1 đồng (VD: /report BTC)"),
-        BotCommand("core", "Report BTC + ETH + BTCDOM"),
-        BotCommand("alert", "Đặt alert giá (VD: /alert BTC 1h below 60000)"),
     ]
     try:
         await app.bot.set_my_commands(commands)
@@ -776,6 +869,19 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("report", report))
     app.add_handler(CommandHandler("core", core))
+
+    # Coin short commands
+    app.add_handler(CommandHandler("btc", coin_report_cmd))
+    app.add_handler(CommandHandler("eth", coin_report_cmd))
+    app.add_handler(CommandHandler("sol", coin_report_cmd))
+    app.add_handler(CommandHandler("trump", coin_report_cmd))
+    app.add_handler(CommandHandler("btcdom", coin_report_cmd))
+    app.add_handler(CommandHandler("strk", coin_report_cmd))
+    app.add_handler(CommandHandler("xrp", coin_report_cmd))
+    app.add_handler(CommandHandler("tao", coin_report_cmd))
+    app.add_handler(CommandHandler("icp", coin_report_cmd))
+    app.add_handler(CommandHandler("virtual", coin_report_cmd))
+
     app.add_handler(CommandHandler("alert", alert_cmd))
 
     # Inline callbacks
