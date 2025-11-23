@@ -225,8 +225,7 @@ def get_indicators(symbol, tf):
     rsi14 = calc_rsi(closes, 14)
     vol_ma20 = calc_ma(vols, 20)
 
-    range_pos_14 = None
-    if len(highs) >= 14 and len(lows) >= 14:
+    range_pos_14 = None    if len(highs) >= 14 and len(lows) >= 14:
         hh = max(highs[-14:])
         ll = min(lows[-14:])
         if hh != ll:
@@ -427,7 +426,7 @@ def get_help_text():
         "Alert giá:\n"
         "  /alert BTC 1h below 60000\n"
         "  /alert BTC 1h above 65000\n\n"
-        "⚠️ Các tin nhắn REPORT sẽ tự xoá sau 5 phút."
+        "⚠️ Các tin nhắn REPORT sẽ tự xoá sau 2 phút."
     )
 
 
@@ -499,9 +498,9 @@ async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
         logger.warning("Failed to delete message: %s", e)
 
 
-def schedule_auto_delete(context: ContextTypes.DEFAULT_TYPE, message, delay: int = 300):
+def schedule_auto_delete(context: ContextTypes.DEFAULT_TYPE, message, delay: int = 120):
     """
-    Đặt job tự xoá message sau <delay> giây (mặc định 300s = 5 phút).
+    Đặt job tự xoá message sau <delay> giây (mặc định 120s = 2 phút).
     Chỉ dùng cho các tin nhắn REPORT.
     """
     try:
@@ -593,7 +592,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /report BTC – report 1 đồng bất kỳ (gõ symbol làm arg).
-    Tin nhắn trả về sẽ auto xoá sau 5 phút.
+    Tin nhắn trả về sẽ auto xoá sau 2 phút.
     """
     symbol_raw = context.args[0] if context.args else "BTC"
     symbol = normalize_symbol(symbol_raw)
@@ -609,7 +608,7 @@ async def core(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Lệnh /core → gửi 3 tin riêng: BTC, ETH, BTCDOM
     để tránh lỗi 'message is too long'.
-    Các tin này sẽ auto xoá sau 5 phút.
+    Các tin này sẽ auto xoá sau 2 phút.
     """
     symbols = ["BTCUSDT", "ETHUSDT", "BTCDOMUSDT"]
     name_map = {
@@ -797,7 +796,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         schedule_auto_delete(context, msg)
 
     elif data == "REPORT3|CORE":
-        # Gửi 3 tin: BTC, ETH, BTCDOM – auto xoá sau 5 phút
+        # Gửi 3 tin: BTC, ETH, BTCDOM – auto xoá sau 2 phút
         symbols = ["BTCUSDT", "ETHUSDT", "BTCDOMUSDT"]
         name_map = {
             "BTCUSDT": "BTC",
