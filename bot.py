@@ -211,20 +211,4 @@ def get_indicators(symbol, tf):
 
     change_pct = None
     if prev_close and prev_close != 0:
-        change_pct = (last_close - prev_close) / prev_close * 100
-
-    range_val = last_high - last_low
-    range_pct = (range_val / last_close * 100) if last_close != 0 else None
-    body_pct = (abs(last_close - last_open) / range_val * 100) if range_val != 0 else None
-
-    atr14 = calc_atr(highs, lows, closes, 14)
-    ma20 = calc_ma(closes, 20)
-    ma50 = calc_ma(closes, 50)
-    ema20 = calc_ema(closes, 20)
-    ema50 = calc_ema(closes, 50)
-    rsi14 = calc_rsi(closes, 14)
-    vol_ma20 = calc_ma(vols, 20)
-
-    # ✅ FIX CHỖ NÀY
-    range_pos_14 = None
-    if len(highs) >= 14 and len(lows) >= 14:
+        change_pct = (last_close - prev_close) / prev_close
