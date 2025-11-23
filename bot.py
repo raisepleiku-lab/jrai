@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # ========= TELEGRAM TOKEN =========
 # 👉 THAY TOKEN CỦA MÀY VÀO ĐÂY (lấy từ BotFather)
-TOKEN = "8340989991:AAFbc5IiM5onGkvJDdzTrVzBgvseMrD-8xA"
+TOKEN = os.getenv("8340989991:AAFbc5IiM5onGkvJDdzTrVzBgvseMrD-8xA")
 
 # ========= CONFIG =========
 # Khung thời gian cho report
@@ -211,4 +211,12 @@ def get_indicators(symbol, tf):
 
     change_pct = None
     if prev_close and prev_close != 0:
-        change_pct = (last_close - prev_close) / prev_close
+        change_pct = (last_close - prev_close) / prev_close * 100
+
+    range_val = last_high - last_low
+    range_pct = (range_val / last_close * 100) if last_close != 0 else None
+    body_pct = (abs(last_close - last_open) / range_val * 100) if range_val != 0 else None
+
+    atr14 = calc_atr(highs, lows, closes, 14)
+    ma20 = calc_ma(closes, 20)
+    ma50 = calc_ma(_
